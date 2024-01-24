@@ -1,0 +1,145 @@
+/* ************************************************************ */
+/*                                                              */
+/* VMDIGEST.EXEC                                                */
+/*  written by Brian Hugenbruch (bwhugen@us.ibm.com) |          */
+/*  https://github.com/Bwhugen/ | Threads @the_lettersea        */
+/*                                                              */
+/* FUNCTION: given a file that exists, provide the SHA256 hash  */
+/*  of this file as console output. The intention is to provide */
+/*  a mechanism for comparing the hashes of z/VM PTF files on   */
+/*  a local system vs. their hashes in IBM documentation, to    */
+/*  demonstrate that they have not been tampered with in        */
+/*  advance of applying them to your system.                    */
+/*                                                              */
+/* REQUIREMENTS:  z/VM 6.4 and/or Author's Edition of Pipelines */
+/*                                                              */
+/* INPUT: PTF file name as command-line argument. fm optional   */
+/*                                                              */
+/* OUTPUT:  SHA256 hash output to console                       */
+/*                                                              */
+/* RETURN CODES:                                                */
+/*   0 - program completes successfully                         */
+/*  -4 - invalid algorithm specified (program terminates)       */
+/*  -8 - invalid invocation (program terminates)                */
+/* -16 - unsupported release of z/VM (program terminates)       */
+/*                                                              */
+/* NOTES:                                                       */
+/*  * Program not limited to PTF files, of course.              */
+/*  * Program does not validate PTF files on VMSES.             */
+/*  * CPACF will be used when available; else software fallback */
+/*                                                              */
+/* ************************************************************ */
+ 
+/* trace i */
+parse upper arg option details
+ 
+select
+  when option=='(FILE' then PTF_file = details
+  when option=='(THIS' then PTF_file = details
+  when option=='(COMP' then PTF_file = details
+  when option=='(HELP' then do
+     call help_file
+     exit(0)
+  end
+  otherwise do
+     say "USAGE >> VMDIGEST (THIS filename filetype filemode"
+     say "Issue VMDIGEST (HELP for more information         "
+     exit(-8)
+  end
+end
+ 
+parse value diag(8,'QUERY CPLEVEL') with . . version . release ',' .
+say "Detected z/VM V"version"."release
+say " "
+if ( (version < 6) | ((version==6)&(release<4)) ) then
+do
+   say "Invalid level of z/VM. Terminating Program."
+   exit(-16)
+end
+ 
+default_cipher = 'SHA256'
+ 
+say '>> PROGRAM Begins'
+say ' '
+say 'Enter Digest Algorith �MD5 | SHA1 | SHA256 | SHA512�'
+say '  (Default: SHA256)'
+parse upper pull program_hash .
+ 
+select
+   when program_hash == 'MD5' then say 'ALGORITHM: MD5'
+   when program_hash == 'SHA1' then say 'ALGORITHM: SHA1'
+   when program_hash == 'SHA256' then say 'ALGORITHM: SHA256'
+   when program_hash == 'SHA512' then say 'ALGORITHM: SHA512'
+   when program_hash == '' then
+     do
+       program_hash = default_cipher
+       say 'ALGORITHM: SHA256'
+     end
+   otherwise do
+     say 'Invalid algorithm; Terminating Program.'
+     exit(-4)
+   end
+end
+ 
+say '>> HASHING:' PTF_file
+say ' '
+ 
+'PIPE <' PTF_file,
+   '|digest' program_hash,
+   '|spec 1-* c2x',
+   '|xlate lower',
+   '|vchar 64 72 pad 40',
+   '|var PTF_hash'
+ 
+say ' '
+if option=='(FILE' then
+do
+    parse var PTF_file nfname . fm .
+    newfile = nfname program_hash fm
+    'PIPE var PTF_hash',
+       '| >' newfile
+    say "Hash value written to" newfile"."
+end
+if option=='(THIS' then say 'HASH=' PTF_hash
+if option=='(COMP' then
+do
+    say 'Enter hash string against which to compare: '
+    parse pull newhash
+    say ' '
+    say ' '
+    say '------------'
+    say 'File hash is:' PTF_hash
+    say 'Comp hash is: ' newhash
+    if newhash = PTF_hash then say 'Comparison Passes'
+    else say 'Comparison Fails'
+end
+ 
+say ' '
+say '>> PROGRAM Ends'
+exit(0)
+ 
+help_file:
+   say 'VMDIGEST generates a hash value for a provided file on a     '
+   say 'locally accessible disk. Useful for checksum and comparison  '
+   say 'purposes.                                                    '
+   say '                                                             '
+   say 'Usage notes:                                                 '
+   say '                                                             '
+   say '  VMDIGEST option file_name file_type                        '
+   say '                                                             '
+   say '    option:                                                  '
+   say '      (HELP                                                  '
+   say '         this output                                         '
+   say '                                                             '
+   say '      (FILE                                                  '
+   say '         creates a hash string for a specified               '
+   say '         filename. User prompted for hash value.             '
+   say '      (COMP                                                  '
+   say '         like (FILE but prompts for a previously provided    '
+   say '         hash string in order to compare                     '
+   say '                                                             '
+   say '    Available hashes are provided by CPACF where possible    '
+   say '                                                             '
+   say '  Requires z/VM 6.4 and associated Pipelines stages.         '
+ 
+return
